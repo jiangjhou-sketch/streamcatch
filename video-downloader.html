@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>StreamCatch — 專業影音下載平台</title>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600&family=Noto+Sans+TC:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:#0a0a0f; --surface:#12121a; --surface2:#1a1a26; --border:#2a2a3d;
+    --accent:#6c63ff; --accent2:#ff6584; --accent3:#43e97b;
+    --text:#e8e8f0; --text-dim:#8888aa; --text-faint:#44445a;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: 'Noto Sans TC', sans-serif; min-height: 100vh; padding-top: 80px; }
+  nav { position: fixed; top: 0; left: 0; right: 0; background: rgba(10,10,15,0.8); backdrop-filter: blur(10px); border-bottom: 1px solid var(--border); padding: 15px 40px; display: flex; justify-content: space-between; align-items: center; z-index: 100; }
+  .logo { font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: 22px; background: linear-gradient(135deg, #6c63ff, #ff6584); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+  .container { max-width: 800px; margin: 0 auto; padding: 20px; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 20px; padding: 30px; box-shadow: 0 20px 50px rgba(0,0,0,0.5); }
+  .tabs { display: flex; gap: 10px; margin-bottom: 25px; background: var(--bg); padding: 5px; border-radius: 12px; }
+  .tab { flex: 1; padding: 12px; border: none; background: transparent; color: var(--text-dim); cursor: pointer; border-radius: 8px; font-weight: 600; }
+  .tab.active { background: var(--surface2); color: var(--text); }
+  input, select { width: 100%; background: var(--bg); border: 1.5px solid var(--border); padding: 15px; border-radius: 12px; color: var(--text); outline: none; margin-top: 8px; font-size: 15px; }
+  .btn-primary { width: 100%; padding: 16px; background: linear-gradient(135deg, var(--accent), #8b5cf6); border: none; border-radius: 12px; color: white; font-weight: 700; font-size: 16px; cursor: pointer; margin-top: 20px; }
+  .btn-primary:disabled { opacity: 0.5; }
+  .status-box { display: none; margin-top: 20px; background: var(--bg); border: 1px solid var(--border); border-radius: 12px; padding: 15px; }
+  .progress-bar { height: 8px; background: var(--surface2); border-radius: 4px; overflow: hidden; margin: 10px 0; }
+  .progress-fill { height: 100%; background: var(--accent); width: 0%; transition: width 0.4s; }
+  .status-meta { display: flex; justify-content: space-between; font-size: 12px; color: var(--text-dim); }
+  .result-box { display: none; margin-top: 20px; background: rgba(67,233,123,0.1); border: 1px solid var(--accent3); border-radius: 12px; padding: 20px; text-align: center; }
+  .btn-download { background: var(--accent3); color: #0a1a0f; width: 100%; padding: 12px; border: none; border-radius: 8px; font-weight: 700; cursor: pointer; margin-top: 15px; }
+</style>
+</head>
+<body>
+
+<nav><div class="logo">StreamCatch</div></nav>
+
+<div class="container">
+  <div class="card">
+    <div class="tabs">
+      <button class="tab active">⬇ 影音下載</button>
+    </div>
+
+    <input type="text" id="dlUrl" placeholder="貼上網址 (YouTube, FB, Threads...)">
+    <div style="display:flex; gap:10px; margin-top:15px;">
+      <select id="dlType"><option value="video">🎬 影片</option><option value="audio">🎵 純音訊</option></select>
+      <select id="dlFormat"><option value="mp4">MP4</option><option value="mp3">MP3</option></select>
+    </div>
+    
+    <button class="btn-primary" id="btnDl" onclick="startDownload()">開始下載任務</button>
+
+    <div class="status-box" id="statusBox">
+      <div class="status-meta"><span id="statusTxt">連線中...</span> <span id="pctTxt">0%</span></div>
+      <div class="progress-bar"><div class="progress-fill" id="progFill"></div></div>
+      <div class="status-meta"><span id="speedTxt">--</span> <span id="etaTxt">--</span></div>
+    </div>
+
+    <div class="result-box" id="resultBox">
+      <div id="resultName" style="font-weight:600; margin-bottom:10px;">✓ 處理完成！</div>
+      <button class="btn-download" id="finalBtn">⬇ 下載檔案到電腦</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  let pollInterval = null;
+
+  async function startDownload() {
+    const url = document.getElementById('dlUrl').value.trim();
+    if(!url) return;
+
+    document.getElementById('btnDl').disabled = true;
+    document.getElementById('statusBox').style.display = 'block';
+    document.getElementById('resultBox').style.display = 'none';
+
+    try {
+      // 1. 呼叫後端 API
+      const res = await fetch('/api/download', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          url: url,
+          type: document.getElementById('dlType').value,
+          format: document.getElementById('dlFormat').value
+        })
+      });
+      const data = await res.json();
+      startPolling(data.task_id);
+    } catch (err) {
+      alert("連線後端失敗，請確認 Python 程式是否正在執行。");
+      document.getElementById('btnDl').disabled = false;
+    }
+  }
+
+  function startPolling(tid) {
+    pollInterval = setInterval(async () => {
+      const res = await fetch(`/api/progress/${tid}`);
+      const data = await res.json();
+      
+      if(data.status === 'downloading' || data.status === 'starting') {
+        document.getElementById('progFill').style.width = (data.progress || 0) + "%";
+        document.getElementById('pctTxt').textContent = Math.floor(data.progress || 0) + "%";
+        document.getElementById('statusTxt').textContent = "正在下載...";
+        document.getElementById('speedTxt').textContent = data.speed || '';
+      } else if(data.status === 'completed') {
+        clearInterval(pollInterval);
+        document.getElementById('statusBox').style.display = 'none';
+        document.getElementById('resultBox').style.display = 'block';
+        document.getElementById('resultName').textContent = data.filename;
+        document.getElementById('finalBtn').onclick = () => window.location.href = `/api/file/${tid}`;
+        document.getElementById('btnDl').disabled = false;
+      } else if(data.status === 'failed') {
+        clearInterval(pollInterval);
+        alert("下載失敗：" + data.error);
+        document.getElementById('btnDl').disabled = false;
+      }
+    }, 1000);
+  }
+</script>
+</body>
+</html>
